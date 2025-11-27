@@ -1,0 +1,10 @@
+deap
+matplotlib
+numpy
+pandas
+scipy
+torch==2.9.0
+tensorboard==2.20.0 
+pyyaml
+ray[rllib]
+gym
