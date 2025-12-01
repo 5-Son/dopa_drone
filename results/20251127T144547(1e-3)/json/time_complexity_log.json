@@ -1,0 +1,110 @@
+[
+  {
+    "num_uavs": 50,
+    "num_targets": 20,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 8.438074827194214
+  },
+  {
+    "num_uavs": 50,
+    "num_targets": 40,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 13.481632947921753
+  },
+  {
+    "num_uavs": 50,
+    "num_targets": 60,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 18.7402024269104
+  },
+  {
+    "num_uavs": 100,
+    "num_targets": 20,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 13.619027614593506
+  },
+  {
+    "num_uavs": 100,
+    "num_targets": 40,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 24.18941831588745
+  },
+  {
+    "num_uavs": 100,
+    "num_targets": 60,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 35.286447286605835
+  },
+  {
+    "num_uavs": 150,
+    "num_targets": 20,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 19.462499618530273
+  },
+  {
+    "num_uavs": 150,
+    "num_targets": 40,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 36.137144565582275
+  },
+  {
+    "num_uavs": 150,
+    "num_targets": 60,
+    "generations": 200,
+    "pop_size": 100,
+    "switching_scheme": "dopa_entropy",
+    "env_type": "dynamic",
+    "dynamic_mode": "dynamic_noise",
+    "scenario": "S4",
+    "seed": 0,
+    "execution_time": 52.0496084690094
+  }
+]

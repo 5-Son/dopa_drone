@@ -34,7 +34,7 @@ def compute_population_entropy(fitnesses, k_bins: int = K_BINS):
 # -----------------------------
 # Wasserstein-1 Distance 계산 (Sinkhorn 근사)
 # -----------------------------
-def compute_wasserstein_distance(pop_fits_prev, pop_fits_next, epsilon: float = 1e-3) -> float:
+def compute_wasserstein_distance(pop_fits_prev, pop_fits_next, epsilon: float = 0.1) -> float:
     """
     DOPA.ipynb의 Sinkhorn 근사 기반 Wasserstein-1 거리 계산 함수.
 
@@ -44,6 +44,16 @@ def compute_wasserstein_distance(pop_fits_prev, pop_fits_next, epsilon: float = 
     """
     pop_fits_prev = np.asarray(pop_fits_prev, dtype=float)
     pop_fits_next = np.asarray(pop_fits_next, dtype=float)
+
+    # Normalize both generations together to [0, 1] per objective
+    all_f = np.vstack([pop_fits_prev, pop_fits_next])
+    mins = all_f.min(axis=0)
+    maxs = all_f.max(axis=0)
+    scale = maxs - mins
+    scale[scale == 0.0] = 1.0
+
+    pop_fits_prev = (pop_fits_prev - mins) / scale
+    pop_fits_next = (pop_fits_next - mins) / scale
 
     a = np.ones(len(pop_fits_prev)) / len(pop_fits_prev)
     b = np.ones(len(pop_fits_next)) / len(pop_fits_next)

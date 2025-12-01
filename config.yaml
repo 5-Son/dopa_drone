@@ -8,14 +8,14 @@ num_targets: 20
 generations: 400
 pop_size: 200
 seeds: [0, 1, 2, 3, 4]
-scenarios: ["S1", "S2", "S3", "S4"]
-env_type: static  # static | dynamic
+scenarios: ["S4"] #["S1", "S2", "S3", "S4"]
+env_type: dynamic  # static | dynamic
 dynamic_mode: dynamic_noise  # dynamic_targets | dynamic_uavs | dynamic_both | dynamic_noise
 enable_plot: true
 pareto_plot_type: "3d"  # 2d | 3d
 pareto_axes: [0, 1]
-plot_metrics: ["entropy_trace", "wasserstein_trace", "cxpb_trace", "mutpb_trace"]
-mode: normal  # normal | time_complexity
+plot_metrics: ["entropy_trace", "wasserstein_trace", "cxpb_trace", "mutpb_trace"] #["entropy_trace", "wasserstein_trace", "cxpb_trace", "mutpb_trace"]
+mode: time_complexity  # normal | time_complexity
 
 time_complexity:
   num_uavs: [50, 100, 150]
