@@ -8,3 +8,4 @@ tensorboard==2.20.0
 pyyaml
 ray[rllib]
 gym
+pymoo

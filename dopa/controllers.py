@@ -37,6 +37,19 @@ class SwitchingController:
     def update(self, gen: int, metrics: Dict, population=None, fitnesses=None):
         raise NotImplementedError
 
+    def _apply_feasibility_push(self, cxpb: float, mutpb: float, metrics: Dict):
+        feasible_rate = metrics.get("feasible_rate")
+        mean_cv = metrics.get("mean_cv")
+        if feasible_rate is None and mean_cv is None:
+            return cxpb, mutpb, {}
+        feasible_rate = float(feasible_rate) if feasible_rate is not None else 0.0
+        mean_cv = float(mean_cv) if mean_cv is not None else 0.0
+        push = feasible_rate < 0.9 or mean_cv > 0.0
+        if push:
+            cxpb = min(cxpb, 0.6)
+            mutpb = max(mutpb, 0.25)
+        return cxpb, mutpb, {"feasibility_push": push, "feasible_rate": feasible_rate, "mean_cv": mean_cv}
+
 
 class DOPAEntropyController(SwitchingController):
     """Original entropy-based schedule."""
@@ -52,7 +65,10 @@ class DOPAEntropyController(SwitchingController):
             mutpb = 0.05 + 0.25 * norm_entropy
         else:
             mutpb = 0.1
-        return cxpb, mutpb, {"norm_entropy": norm_entropy}
+        info = {"norm_entropy": norm_entropy}
+        cxpb, mutpb, feas_info = self._apply_feasibility_push(cxpb, mutpb, metrics)
+        info.update(feas_info)
+        return cxpb, mutpb, info
 
 
 class SATempController(SwitchingController):
@@ -71,7 +87,10 @@ class SATempController(SwitchingController):
         temp = self._temperature(gen)
         cxpb = 0.5 + 0.4 * temp if self.adaptive_cx else 0.9
         mutpb = 0.05 + 0.35 * temp if self.adaptive_mut else 0.1
-        return cxpb, mutpb, {"temperature": temp}
+        info = {"temperature": temp}
+        cxpb, mutpb, feas_info = self._apply_feasibility_push(cxpb, mutpb, metrics)
+        info.update(feas_info)
+        return cxpb, mutpb, info
 
 
 class MABUCBController(SwitchingController):
@@ -121,8 +140,10 @@ class MABUCBController(SwitchingController):
             cxpb = 0.9
         if not self.adaptive_mut:
             mutpb = 0.1
-
-        return cxpb, mutpb, {"arm": action, "reward": reward}
+        info = {"arm": action, "reward": reward}
+        cxpb, mutpb, feas_info = self._apply_feasibility_push(cxpb, mutpb, metrics)
+        info.update(feas_info)
+        return cxpb, mutpb, info
 
 
 class DQNSwitchingController(SwitchingController):
@@ -234,7 +255,10 @@ class DQNSwitchingController(SwitchingController):
             cxpb = 0.9
         if not self.adaptive_mut:
             mutpb = 0.1
-        return cxpb, mutpb, {"arm": action, "ray": self._use_ray}
+        info = {"arm": action, "ray": self._use_ray}
+        cxpb, mutpb, feas_info = self._apply_feasibility_push(cxpb, mutpb, metrics)
+        info.update(feas_info)
+        return cxpb, mutpb, info
 
 
 class MOEADAdaptiveController(SwitchingController):
@@ -268,7 +292,10 @@ class MOEADAdaptiveController(SwitchingController):
             mutpb = base_mut + 0.2 * (1.0 / (1.0 + np.exp(-5 * improvement)))
         else:
             mutpb = base_mut
-        return float(cxpb), float(mutpb), {"scalar_improvement": improvement}
+        info = {"scalar_improvement": improvement}
+        cxpb, mutpb, feas_info = self._apply_feasibility_push(float(cxpb), float(mutpb), metrics)
+        info.update(feas_info)
+        return float(cxpb), float(mutpb), info
 
 
 class Strategy1Controller(SwitchingController):
@@ -293,7 +320,10 @@ class Strategy1Controller(SwitchingController):
         else:
             cxpb = 0.85 if self.adaptive_cx else 0.9
             mutpb = 0.08 if self.adaptive_mut else 0.1
-        return cxpb, mutpb, {"mode": self.mode}
+        info = {"mode": self.mode}
+        cxpb, mutpb, feas_info = self._apply_feasibility_push(cxpb, mutpb, metrics)
+        info.update(feas_info)
+        return cxpb, mutpb, info
 
 
 class Strategy2Controller(SwitchingController):
@@ -321,7 +351,10 @@ class Strategy2Controller(SwitchingController):
         else:
             cxpb = 0.85 if self.adaptive_cx else 0.9
             mutpb = 0.12 if self.adaptive_mut else 0.1
-        return cxpb, mutpb, {"wasserstein_delta": delta, "ema_w": self.ema_w}
+        info = {"wasserstein_delta": delta, "ema_w": self.ema_w}
+        cxpb, mutpb, feas_info = self._apply_feasibility_push(cxpb, mutpb, metrics)
+        info.update(feas_info)
+        return cxpb, mutpb, info
 
 
 class Strategy3Controller(SwitchingController):
@@ -334,7 +367,10 @@ class Strategy3Controller(SwitchingController):
         score = 0.5 * ent - 0.3 * w + 0.2 * imp
         cxpb = 0.4 + 0.5 * np.clip(score, 0, 1) if self.adaptive_cx else 0.9
         mutpb = 0.05 + 0.3 * np.clip(1 - score, 0, 1) if self.adaptive_mut else 0.1
-        return cxpb, mutpb, {"composite_score": score}
+        info = {"composite_score": score}
+        cxpb, mutpb, feas_info = self._apply_feasibility_push(cxpb, mutpb, metrics)
+        info.update(feas_info)
+        return cxpb, mutpb, info
 
 
 def build_controller(scheme: str, ngen: int, adaptive_mut: bool, adaptive_cx: bool, population_size: int | None = None) -> SwitchingController:

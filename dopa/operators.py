@@ -56,6 +56,60 @@ def hybrid_select(pop, k):
     return selected
 
 
+def _select_by_fronts(pop, k):
+    """Select with NSGA-II fronts + Riemannian crowding distance."""
+    if k <= 0:
+        return []
+    fronts = tools.sortNondominated(pop, k, first_front_only=False)
+    selected = []
+    for front in fronts:
+        if len(selected) + len(front) <= k:
+            selected.extend(front)
+        else:
+            distances = riemannian_crowding_distance(front)
+            distances = np.nan_to_num(distances, nan=0.0, posinf=0.0, neginf=0.0)
+            sorted_idx = np.argsort(-distances)
+            selected.extend([front[i] for i in sorted_idx[: k - len(selected)]])
+            break
+    return selected
+
+
+def constraint_dominance_select(pop, k):
+    """
+    Deb's constraint-domination: feasible dominates infeasible; among infeasible,
+    lower constraint violation is preferred; nondominated sorting applies only
+    within the feasible set.
+    """
+    if k <= 0:
+        return []
+
+    cvs = np.array([float(getattr(ind, "cv", 0.0)) for ind in pop])
+    feasible = [ind for ind, cv in zip(pop, cvs) if cv <= 0.0]
+    infeasible = [ind for ind, cv in zip(pop, cvs) if cv > 0.0]
+    infeasible_cvs = cvs[cvs > 0.0]
+
+    selected = []
+    if feasible:
+        selected = _select_by_fronts(feasible, min(k, len(feasible)))
+
+    if len(selected) < k and infeasible:
+        remaining = k - len(selected)
+        order = []
+        unique_cvs = np.unique(infeasible_cvs)
+        for cv in unique_cvs:
+            group = [ind for ind, cv_i in zip(infeasible, infeasible_cvs) if cv_i == cv]
+            if len(group) > 1:
+                distances = riemannian_crowding_distance(group)
+                distances = np.nan_to_num(distances, nan=0.0, posinf=0.0, neginf=0.0)
+                sorted_idx = np.argsort(-distances)
+                order.extend([group[i] for i in sorted_idx])
+            else:
+                order.extend(group)
+        selected.extend(order[:remaining])
+
+    return selected
+
+
 def select_with_riemannian(pop, k):
     """
     DOPA.ipynb에 있던 select_with_riemannian(pop, k) 그대로.

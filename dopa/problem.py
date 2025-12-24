@@ -116,6 +116,38 @@ class UAVTargetAssignmentProblem:
 
         return np.array(individual, dtype=int)
 
+    def repair_individual(
+        self, individual: np.ndarray, rng: Optional[np.random.Generator] = None
+    ) -> np.ndarray:
+        """
+        Enforce feasibility by making each UAV pick exactly one target and
+        preferring assignments within D_max when available.
+        """
+        arr = np.array(individual, dtype=int, copy=True)
+        if arr.size != self.N * self.M:
+            return arr
+
+        mats = arr.reshape(self.N, self.M)
+        for i in range(self.N):
+            row = mats[i]
+            ones = np.where(row == 1)[0]
+            feasible = np.where(self.d_ij[i] <= self.D_max)[0]
+
+            if feasible.size == 0:
+                target = int(np.argmin(self.d_ij[i]))
+            else:
+                feasible_set = {int(j) for j in feasible}
+                feasible_ones = [int(j) for j in ones if int(j) in feasible_set]
+                if feasible_ones:
+                    target = int(rng.choice(feasible_ones)) if rng is not None else int(feasible_ones[0])
+                else:
+                    target = int(rng.choice(feasible)) if rng is not None else int(feasible[0])
+
+            row[:] = 0
+            row[target] = 1
+
+        return mats.reshape(-1)
+
     # ------------------------------------------------------------------
     # 2. 개체 → x_ij 변환 (I 행렬)
     # ------------------------------------------------------------------
@@ -206,6 +238,41 @@ class UAVTargetAssignmentProblem:
 
     def constraint_penalty(self, individual: np.ndarray) -> float:
         res = self.constraint_penalty_batch([individual])
+        return float(res[0])
+
+    # ------------------------------------------------------------------
+    # 4b. Raw constraint violation score (for comparison logging)
+    # ------------------------------------------------------------------
+    def constraint_violation_score_batch(self, individuals: Iterable[np.ndarray]) -> np.ndarray:
+        """
+        Return raw violation counts without penalty scaling.
+        This is used for baseline comparisons and feasibility-rate reporting.
+        """
+        arr = np.asarray(list(individuals), dtype=int)
+        if arr.ndim == 1:
+            arr = arr.reshape(1, -1)
+        batch_size = arr.shape[0]
+        mats = arr.reshape(batch_size, self.N, self.M)
+
+        if self._torch_ready and self.enable_batch_eval:
+            I = to_tensor(mats, self._device, dtype=torch.float32)
+            suicide_violation = torch.sum(torch.sum(I, dim=2) != 1, dim=1)
+            mission_violation = (torch.sum(I, dim=(1, 2)) > self.C_total).int()
+            distance_violation = torch.sum((self._d_ij_t > self.D_max) * (I > 0.5), dim=(1, 2))
+            violation_score = suicide_violation + mission_violation + distance_violation
+            return to_numpy(violation_score)
+
+        scores: List[float] = []
+        for I in mats:
+            suicide_violation = int(np.sum(np.sum(I, axis=1) != 1))
+            mission_violation = int(np.sum(I) > self.C_total)
+            distance_violation = int(np.sum((self.d_ij > self.D_max) * I))
+            scores.append(float(suicide_violation + mission_violation + distance_violation))
+
+        return np.array(scores, dtype=float)
+
+    def constraint_violation_score(self, individual: np.ndarray) -> float:
+        res = self.constraint_violation_score_batch([individual])
         return float(res[0])
 
     # ------------------------------------------------------------------

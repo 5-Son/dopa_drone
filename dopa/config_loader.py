@@ -12,8 +12,10 @@ DEFAULT_CONFIG = {
     "switching_scheme": "dopa_entropy",
     "num_uavs": 50,
     "num_targets": 20,
-    "generations": 400,
-    "pop_size": 200,
+    "generations": 381,
+    "pop_size": 210,
+    # Keep C_total >= num_uavs so sum==1 per UAV is feasible by default.
+    "max_total_missions": 50,
     "seeds": [0, 1, 2, 3, 4],
     "scenarios": ["S1", "S2", "S3", "S4"],
     "env_type": "static",

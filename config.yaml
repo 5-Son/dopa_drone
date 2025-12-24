@@ -5,23 +5,24 @@
 switching_scheme: dopa_entropy
 num_uavs: 50
 num_targets: 20
-generations: 400
-pop_size: 200
+generations: 381
+pop_size: 210
 seeds: [0, 1, 2, 3, 4]
 scenarios: ["S4"] #["S1", "S2", "S3", "S4"]
-env_type: dynamic  # static | dynamic
+env_type: static  # static | dynamic
 dynamic_mode: dynamic_noise  # dynamic_targets | dynamic_uavs | dynamic_both | dynamic_noise
 enable_plot: true
 pareto_plot_type: "3d"  # 2d | 3d
 pareto_axes: [0, 1]
 plot_metrics: ["entropy_trace", "wasserstein_trace", "cxpb_trace", "mutpb_trace"] #["entropy_trace", "wasserstein_trace", "cxpb_trace", "mutpb_trace"]
 mode: time_complexity  # normal | time_complexity
+max_total_missions: 50
 
 time_complexity:
-  num_uavs: [50, 100, 150]
-  num_targets: [20, 40, 60]
+  num_uavs: [50, 100, 1000]
+  num_targets: [20, 40, 100]
   generations: [200]
   pop_size: [100]
-  switching_schemes: ["dopa_entropy"] #["dopa_entropy", "sa_temp"]
-  seeds: [0]
-  scenarios: ["S4"]
+  switching_schemes: ["dopa_entropy", "sa_temp"] #["dopa_entropy", "sa_temp"]
+  seeds: [0, 1, 2, 3, 4]
+  scenarios: ["S1", "S2", "S3", "S4"]

@@ -8,7 +8,7 @@ from typing import List
 from deap import base, creator, tools
 
 from .problem import UAVTargetAssignmentProblem
-from .operators import hybrid_select
+from .operators import constraint_dominance_select
 from .metrics import compute_population_entropy, compute_wasserstein_distance, K_BINS
 from .controllers import build_controller
 from .torch_utils import describe_device
@@ -76,14 +76,18 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
     # -----------------------------
     def evaluate(ind):
         arr = np.array(ind, dtype=int)
+        ind.cv = float(problem.constraint_violation_score(arr))
         return problem.evaluate_with_penalty(arr)
 
     def batch_evaluate(individuals: List):
         if not individuals:
             return
-        values = problem.evaluate_with_penalty_batch([np.array(ind, dtype=int) for ind in individuals])
-        for ind, val in zip(individuals, values):
+        arrays = [np.array(ind, dtype=int) for ind in individuals]
+        values = problem.evaluate_with_penalty_batch(arrays)
+        cvs = problem.constraint_violation_score_batch(arrays)
+        for ind, val, cv in zip(individuals, values, cvs):
             ind.fitness.values = tuple(float(v) for v in val)
+            ind.cv = float(cv)
 
     # -----------------------------
     # DEAP Toolbox 설정
@@ -93,14 +97,34 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
     # 개체 생성: problem.encode_random_individual 사용
     def _make_individual():
         genes = problem.encode_random_individual(rng)  # 길이 N*M 벡터
+        genes = problem.repair_individual(genes, rng=rng)
         return creator.Individual(genes.tolist())
 
     toolbox.register("individual", _make_individual)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
     toolbox.register("evaluate", evaluate)
     toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)
-    toolbox.register("select", hybrid_select)  # Riemann + NSGA-II 조합 선택
+    def mutate_reassign(individual, indpb=0.05):
+        arr = np.array(individual, dtype=int).reshape(N, M)
+        for i in range(N):
+            if rng.random() < indpb:
+                feasible = np.where(problem.d_ij[i] <= problem.D_max)[0]
+                if feasible.size == 0:
+                    target = int(np.argmin(problem.d_ij[i]))
+                else:
+                    current = int(np.argmax(arr[i])) if np.any(arr[i]) else None
+                    if current is not None and current in feasible and feasible.size > 1:
+                        candidates = feasible[feasible != current]
+                        target = int(rng.choice(candidates))
+                    else:
+                        target = int(rng.choice(feasible))
+                arr[i, :] = 0
+                arr[i, target] = 1
+        individual[:] = arr.reshape(-1).tolist()
+        return (individual,)
+
+    toolbox.register("mutate", mutate_reassign, indpb=0.05)
+    toolbox.register("select", constraint_dominance_select)  # constraint-dominance + crowding
 
     # -----------------------------
     # 초기 Population 생성 및 평가
@@ -147,11 +171,16 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
         norm_entropy = (entropy - min_entropy) / (max_entropy - min_entropy + 1e-8)
         norm_entropy = np.clip(norm_entropy, 0.0, 1.0)
 
+        cv_values = np.array([getattr(ind, "cv", 0.0) for ind in pop], dtype=float)
+        feasible_rate = float(np.mean(cv_values == 0.0)) if len(cv_values) else 0.0
+        mean_cv = float(np.mean(cv_values)) if len(cv_values) else 0.0
         metrics = {
             "norm_entropy": float(norm_entropy),
             "entropy": float(entropy),
             "wasserstein": float(last_wasserstein),
             "improvement": float(last_improvement),
+            "feasible_rate": feasible_rate,
+            "mean_cv": mean_cv,
             "gen": gen,
         }
 
@@ -186,6 +215,8 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
                     del ind1.fitness.values
                 if "fitness" in ind2.__dict__:
                     del ind2.fitness.values
+                ind1[:] = problem.repair_individual(np.array(ind1, dtype=int), rng=rng).tolist()
+                ind2[:] = problem.repair_individual(np.array(ind2, dtype=int), rng=rng).tolist()
 
         # Mutation
         for mutant in offspring:
@@ -193,12 +224,13 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
                 toolbox.mutate(mutant)
                 if "fitness" in mutant.__dict__:
                     del mutant.fitness.values
+                mutant[:] = problem.repair_individual(np.array(mutant, dtype=int), rng=rng).tolist()
 
         # 새로 생성된 개체 평가
         invalid = [ind for ind in offspring if not ind.fitness.valid]
         batch_evaluate(invalid)
 
-        # 부모 + 자식 합쳐서 NSGA-II 선택(hybrid_select)
+        # 부모 + 자식 합쳐서 constraint-dominance 선택
         pop = toolbox.select(pop + offspring, config.pop_size)
 
         # Wasserstein-1 Distance 추적 및 개선량 계산
@@ -217,6 +249,11 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
     # 최종 Pareto front (fitness.values만 모음)
     pareto = [ind.fitness.values for ind in pop if ind.fitness.valid]
 
+    # Log raw objective values and raw constraint violation scores for comparisons.
+    final_pop = [np.array(ind, dtype=int) for ind in pop]
+    final_population_raw = problem.evaluate_objectives_batch(final_pop)
+    final_population_cv = problem.constraint_violation_score_batch(final_pop)
+
     result = {
         "seed": config.seed,
         "adaptive_mut": config.adaptive_mut,
@@ -229,6 +266,8 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
         "cxpb_trace": cxpb_trace,
         "mutpb_trace": mutpb_trace,
         "controller_trace": controller_info_trace,
+        "final_population_raw": final_population_raw.tolist(),
+        "final_population_cv": final_population_cv.tolist(),
         "switching_scheme": config.switching_scheme,
         "device": describe_device(problem._device) if hasattr(problem, "_device") else None,
         "env_type": getattr(problem, "env_type", "static"),

@@ -27,6 +27,23 @@ python run.py
 ```
 Outputs: one file per scenario/seed, e.g. `results/<timestamp>/json/result_S4_seed0.json`, with plots under `results/<timestamp>/plot/`. Key fields include `scenario`, `scenario_name`, `seed`, `adaptive_mut`, `adaptive_cx`, `execution_time`, `final_pareto` (list of [F1, F2, F3]), `wasserstein_trace`, `entropy_trace`, `cxpb_trace`, and `mutpb_trace`.
 
+Baseline comparison (pymoo)
+---------------------------
+Run DOPA vs NSGA-III/NSGA-II(CDP) on the same per-seed instance:
+```
+python compare_baselines.py --config config.yaml --scenario S4
+```
+Outputs live under `results/compare_<timestamp>/` with:
+- per-seed JSON (includes `final_population_raw` and `final_population_cv` for each algorithm)
+- three comparison plots (HV, IGD+, feasibility/CV/runtime)
+
+Improving DOPA vs baselines (practical priorities)
+--------------------------------------------------
+- Make solutions feasibility-preserving: represent an individual as length-N integer targets (one target per UAV), or keep one-hot but add a repair step after crossover/mutation to enforce sum(row)==1 and d_ij <= D_max.
+- Add constraint-domination to selection: apply Deb's rules (feasible dominates infeasible; among infeasible prefer lower cv; only then use nondominated sorting/crowding).
+- Use problem-aware variation: mutation that reassigns a UAV to a different feasible target (or swaps two UAV assignments) is far more effective than bit-flipping large one-hot vectors.
+- Only then tune DOPA's "secret sauce": feed feasible_rate / mean_cv into the controller so it can push feasibility early, then exploit once stability is reached.
+
 Configuration (YAML, sweeps, and schemes)
 -----------------------------------------
 - Edit `config.yaml` (auto-loaded by `run.py`) to change problem size, seeds, schemes, plotting, etc. Provide lists to sweep combinations automatically.

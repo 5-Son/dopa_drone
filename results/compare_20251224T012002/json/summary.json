@@ -1,0 +1,47 @@
+{
+  "summary": {
+    "DOPA": {
+      "hv_mean": 0.0,
+      "hv_std": 0.0,
+      "igd_plus_mean": Infinity,
+      "igd_plus_std": NaN,
+      "feasible_rate_mean": 0.0,
+      "feasible_rate_std": 0.0,
+      "mean_cv_mean": 48.98857142857143,
+      "mean_cv_std": 1.435039326457894,
+      "runtime_mean": 29.89089093208313,
+      "runtime_std": 0.29493268493388997
+    },
+    "NSGA3": {
+      "hv_mean": 185.73422880236316,
+      "hv_std": 272.9218798698437,
+      "igd_plus_mean": 7.767344877363703,
+      "igd_plus_std": 8.680226017152613,
+      "feasible_rate_mean": 1.0,
+      "feasible_rate_std": 0.0,
+      "mean_cv_mean": 0.0,
+      "mean_cv_std": 0.0,
+      "runtime_mean": 22.540761852264403,
+      "runtime_std": 0.32565699054982783
+    },
+    "NSGA2_CDP": {
+      "hv_mean": 228.64936275325732,
+      "hv_std": 380.76517462149303,
+      "igd_plus_mean": 23.738067931482668,
+      "igd_plus_std": 50.440347894802606,
+      "feasible_rate_mean": 0.800952380952381,
+      "feasible_rate_std": 0.44508400694995814,
+      "mean_cv_mean": 0.19904761904761906,
+      "mean_cv_std": 0.44508400694995814,
+      "runtime_mean": 20.826177644729615,
+      "runtime_std": 0.16420562315625814
+    }
+  },
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ]
+}
