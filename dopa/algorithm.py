@@ -40,7 +40,7 @@ def _setup_deap_types():
         creator.create("Individual", list, fitness=creator.FitnessMulti)
 
 
-def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
+def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig, progress_cb=None):
     """
     원래의 run_dopa(adaptive_mut, adaptive_cx, seed, ...)를
     클래스/모듈 기반으로 옮긴 버전.
@@ -70,21 +70,26 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
 
     N = problem.N
     M = problem.M
+    eval_count = 0
 
     # -----------------------------
     # 평가 함수 (apply_constraints 로직 포함)
     # -----------------------------
     def evaluate(ind):
+        nonlocal eval_count
         arr = np.array(ind, dtype=int)
         ind.cv = float(problem.constraint_violation_score(arr))
+        eval_count += 1
         return problem.evaluate_with_penalty(arr)
 
     def batch_evaluate(individuals: List):
+        nonlocal eval_count
         if not individuals:
             return
         arrays = [np.array(ind, dtype=int) for ind in individuals]
         values = problem.evaluate_with_penalty_batch(arrays)
         cvs = problem.constraint_violation_score_batch(arrays)
+        eval_count += len(individuals)
         for ind, val, cv in zip(individuals, values, cvs):
             ind.fitness.values = tuple(float(v) for v in val)
             ind.cv = float(cv)
@@ -172,8 +177,14 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
         norm_entropy = np.clip(norm_entropy, 0.0, 1.0)
 
         cv_values = np.array([getattr(ind, "cv", 0.0) for ind in pop], dtype=float)
-        feasible_rate = float(np.mean(cv_values == 0.0)) if len(cv_values) else 0.0
-        mean_cv = float(np.mean(cv_values)) if len(cv_values) else 0.0
+        if len(cv_values):
+            feasible_count = int(np.sum(cv_values == 0.0))
+            feasible_rate = feasible_count / len(cv_values)
+            mean_cv = float(np.mean(cv_values))
+        else:
+            feasible_count = 0
+            feasible_rate = 0.0
+            mean_cv = 0.0
         metrics = {
             "norm_entropy": float(norm_entropy),
             "entropy": float(entropy),
@@ -244,6 +255,14 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
         mean_new = np.mean(new_fits, axis=0)
         last_improvement = (mean_new[0] - mean_prev[0]) - (mean_new[1] - mean_prev[1]) - (mean_new[2] - mean_prev[2])
 
+        if progress_cb is not None:
+            progress_cb(
+                gen=gen + 1,
+                eval_count=eval_count,
+                feasible_rate=feasible_rate,
+                feasible_count=feasible_count,
+            )
+
     end_time = time.time()
 
     # 최종 Pareto front (fitness.values만 모음)
@@ -272,6 +291,7 @@ def run_dopa(problem: UAVTargetAssignmentProblem, config: DOPAConfig):
         "device": describe_device(problem._device) if hasattr(problem, "_device") else None,
         "env_type": getattr(problem, "env_type", "static"),
         "dynamic_mode": getattr(problem, "dynamic_mode", None),
+        "num_evaluations": eval_count,
         "environment_events": getattr(problem, "environment_events", None)
         if hasattr(problem, "environment_events")
         else (problem.get_environment_events() if hasattr(problem, "get_environment_events") else None),

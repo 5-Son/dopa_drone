@@ -27,6 +27,25 @@ python run.py
 ```
 Outputs: one file per scenario/seed, e.g. `results/<timestamp>/json/result_S4_seed0.json`, with plots under `results/<timestamp>/plot/`. Key fields include `scenario`, `scenario_name`, `seed`, `adaptive_mut`, `adaptive_cx`, `execution_time`, `final_pareto` (list of [F1, F2, F3]), `wasserstein_trace`, `entropy_trace`, `cxpb_trace`, and `mutpb_trace`.
 
+Progress bars (optional)
+------------------------
+- Progress bars use `tqdm` when available. Install it if desired:
+```
+pip install tqdm
+```
+- Default behavior: show progress bars only when stdout is a TTY.
+- CLI flags:
+```
+python run.py --no-progress
+python run.py --progress
+python compare_baselines.py --no-progress
+python compare_baselines.py --progress
+```
+- Environment variables:
+  - `DOPA_NO_PROGRESS=1` disables bars
+  - `DOPA_PROGRESS=1` forces bars even without a TTY
+- If `tqdm` is not installed, the scripts fall back to normal logging.
+
 Baseline comparison (pymoo)
 ---------------------------
 Run DOPA vs NSGA-III/NSGA-II(CDP) on the same per-seed instance:

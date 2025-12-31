@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import random
+import sys
 import time
 from datetime import datetime
 from typing import Dict, List
@@ -21,6 +22,10 @@ matplotlib.use("Agg")  # headless-safe
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import numpy as np
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - optional dependency
+    tqdm = None
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.algorithms.moo.nsga3 import NSGA3
 try:
@@ -56,6 +61,107 @@ from dopa.config_loader import load_config, to_list
 from dopa.metrics import compute_population_entropy, compute_wasserstein_distance
 from dopa.problem_factory import make_problem
 from dopa.scenarios import run_scenario
+
+_PROGRESS_ENABLED = False
+
+
+class _NoOpProgress:
+    def __init__(self, total=None):
+        self.total = total
+        self.n = 0
+
+    def update(self, n=1):
+        self.n += n
+
+    def set_postfix(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+
+def _set_progress_enabled(enabled: bool):
+    global _PROGRESS_ENABLED
+    _PROGRESS_ENABLED = enabled
+
+
+def _progress_write(msg: str):
+    if tqdm is not None and _PROGRESS_ENABLED:
+        tqdm.write(msg)
+    else:
+        print(msg)
+
+
+def _get_progress(total, desc, enabled: bool, leave: bool = True, position: int | None = None):
+    if tqdm is None or not enabled:
+        return _NoOpProgress(total=total)
+    return tqdm(total=total, desc=desc, leave=leave, position=position, dynamic_ncols=True)
+
+
+def _safe_update(bar, delta: int):
+    if delta <= 0:
+        return
+    total = getattr(bar, "total", None)
+    if total is None:
+        bar.update(delta)
+        return
+    remaining = total - getattr(bar, "n", 0)
+    if remaining <= 0:
+        return
+    bar.update(min(delta, remaining))
+
+
+def _resolve_progress_enabled(args) -> bool:
+    if args.no_progress or os.getenv("DOPA_NO_PROGRESS") == "1":
+        return False
+    if args.progress or os.getenv("DOPA_PROGRESS") == "1":
+        return True
+    return sys.stdout.isatty()
+
+
+def _make_gen_progress(
+    *,
+    ngen: int,
+    pop_size: int,
+    seed: int,
+    scenario: str,
+    env_type: str,
+    algo: str,
+    enabled: bool,
+):
+    bar = _get_progress(ngen, desc=f"{algo} gen", enabled=enabled, leave=False, position=1)
+    total_evals = pop_size * ngen if pop_size and ngen else None
+
+    def progress_cb(gen=None, eval_count=None, feasible_rate=None, feasible_count=None):
+        if gen is None:
+            return
+        delta = gen - getattr(bar, "n", 0)
+        _safe_update(bar, delta)
+        postfix = {
+            "seed": seed,
+            "scenario": scenario,
+            "env": env_type,
+            "algo": algo,
+            "gen": gen,
+        }
+        if eval_count is not None:
+            if total_evals:
+                postfix["eval"] = f"{int(eval_count)}/{int(total_evals)}"
+            else:
+                postfix["eval"] = int(eval_count)
+        if feasible_count is not None:
+            postfix["feas#"] = int(feasible_count)
+        if feasible_rate is not None:
+            postfix["feas"] = f"{feasible_rate:.3f}"
+        bar.set_postfix(postfix)
+
+    return bar, progress_cb
 
 
 def _timestamp() -> str:
@@ -105,26 +211,43 @@ def _feasible_nd_raw(raw: np.ndarray, cv: np.ndarray) -> np.ndarray:
 class BaselineTraceCallback(Callback):
     """Collect entropy and Wasserstein traces on penalized objectives."""
 
-    def __init__(self, eval_problem):
+    def __init__(self, eval_problem=None, progress_cb=None, collect_traces: bool = True):
         super().__init__()
         self.eval_problem = eval_problem
+        self.progress_cb = progress_cb
+        self.collect_traces = collect_traces
         self.entropy_trace: List[float] = []
         self.wasserstein_trace: List[float] = []
         self._prev_fit = None
 
     def notify(self, algorithm):
-        X = algorithm.pop.get("X")
-        if X is None:
-            return
-        arr = np.asarray(X, dtype=int)
-        fits = self.eval_problem.evaluate_with_penalty_batch(arr)
-        self.entropy_trace.append(compute_population_entropy(fits))
-        if self._prev_fit is None:
-            w = 0.0
-        else:
-            w = compute_wasserstein_distance(self._prev_fit, fits)
-        self.wasserstein_trace.append(w)
-        self._prev_fit = fits
+        if self.collect_traces and self.eval_problem is not None:
+            X = algorithm.pop.get("X")
+            if X is not None:
+                arr = np.asarray(X, dtype=int)
+                fits = self.eval_problem.evaluate_with_penalty_batch(arr)
+                self.entropy_trace.append(compute_population_entropy(fits))
+                if self._prev_fit is None:
+                    w = 0.0
+                else:
+                    w = compute_wasserstein_distance(self._prev_fit, fits)
+                self.wasserstein_trace.append(w)
+                self._prev_fit = fits
+
+        if self.progress_cb is not None:
+            gen = getattr(algorithm, "n_gen", None)
+            eval_count = None
+            evaluator = getattr(algorithm, "evaluator", None)
+            if evaluator is not None and hasattr(evaluator, "n_eval"):
+                eval_count = evaluator.n_eval
+            feasible_rate = None
+            pop = getattr(algorithm, "pop", None)
+            if pop is not None:
+                cv = pop.get("CV")
+                if cv is not None:
+                    cv = np.asarray(cv, dtype=float)
+                    feasible_rate = float(np.mean(cv <= 0.0)) if len(cv) else 0.0
+            self.progress_cb(gen=gen, eval_count=eval_count, feasible_rate=feasible_rate)
 
 
 class UAVAssignmentPymooProblem(Problem):
@@ -169,7 +292,16 @@ class UAVAssignmentPymooProblem(Problem):
             out["G"] = np.hstack([g1, g2, g3])
 
 
-def _run_pymoo(problem, alg_name: str, ngen: int, pop_size: int, seed: int, eval_problem=None, track_trace: bool = False):
+def _run_pymoo(
+    problem,
+    alg_name: str,
+    ngen: int,
+    pop_size: int,
+    seed: int,
+    eval_problem=None,
+    track_trace: bool = False,
+    progress_cb=None,
+):
     """Run a pymoo algorithm and return runtime + final population (+ traces if requested)."""
     random.seed(seed)
     np.random.seed(seed)
@@ -201,18 +333,31 @@ def _run_pymoo(problem, alg_name: str, ngen: int, pop_size: int, seed: int, eval
 
     start = time.time()
     callback = None
-    if track_trace and eval_problem is not None:
-        callback = BaselineTraceCallback(eval_problem)
+    if track_trace or progress_cb is not None:
+        callback = BaselineTraceCallback(
+            eval_problem=eval_problem if track_trace else None,
+            progress_cb=progress_cb,
+            collect_traces=track_trace,
+        )
     res = minimize(problem, algorithm, ("n_gen", ngen), seed=seed, verbose=False, callback=callback)
     runtime = time.time() - start
     X = res.pop.get("X")
+    n_eval = None
+    if hasattr(res, "evaluator") and res.evaluator is not None and hasattr(res.evaluator, "n_eval"):
+        n_eval = res.evaluator.n_eval
+    elif hasattr(res, "algorithm") and res.algorithm is not None:
+        algo_eval = getattr(res.algorithm, "evaluator", None)
+        if algo_eval is not None and hasattr(algo_eval, "n_eval"):
+            n_eval = algo_eval.n_eval
+    if n_eval is None:
+        n_eval = pop_size * (ngen + 1)
     traces = {}
-    if callback is not None:
+    if callback is not None and track_trace:
         traces = {
             "entropy_trace": callback.entropy_trace,
             "wasserstein_trace": callback.wasserstein_trace,
         }
-    return runtime, np.asarray(X, dtype=int), traces
+    return runtime, np.asarray(X, dtype=int), traces, int(n_eval)
 
 
 def _compute_metrics(per_alg: Dict[str, Dict[str, np.ndarray]], margin: float = 0.05):
@@ -323,8 +468,10 @@ def _barplot_summary(stats_by_alg: Dict[str, Dict[str, float]], path: str):
     cv_std = [stats_by_alg[k]["mean_cv_std"] for k in labels]
     runtime = [stats_by_alg[k]["runtime_mean"] for k in labels]
     runtime_std = [stats_by_alg[k]["runtime_std"] for k in labels]
+    evals = [stats_by_alg[k]["eval_mean"] for k in labels]
+    evals_std = [stats_by_alg[k]["eval_std"] for k in labels]
 
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
 
     axes[0].bar(x, feas, yerr=feas_std, capsize=4)
     axes[0].set_title("Feasible Rate")
@@ -344,6 +491,12 @@ def _barplot_summary(stats_by_alg: Dict[str, Dict[str, float]], path: str):
     axes[2].set_xticklabels(labels, rotation=15)
     axes[2].grid(True, axis="y", alpha=0.4)
 
+    axes[3].bar(x, evals, yerr=evals_std, capsize=4)
+    axes[3].set_title("Evaluation Budget")
+    axes[3].set_xticks(x)
+    axes[3].set_xticklabels(labels, rotation=15)
+    axes[3].grid(True, axis="y", alpha=0.4)
+
     fig.tight_layout()
     fig.savefig(path, dpi=200)
     plt.close(fig)
@@ -353,14 +506,19 @@ def main():
     parser = argparse.ArgumentParser(description="Compare DOPA vs pymoo baselines.")
     parser.add_argument("--config", default="config.yaml", help="Path to YAML config.")
     parser.add_argument("--scenario", default="S4", help="DOPA scenario key (default: S4).")
+    parser.add_argument("--no-progress", action="store_true", help="Disable progress bars.")
+    parser.add_argument("--progress", action="store_true", help="Force progress bars even without a TTY.")
     args = parser.parse_args()
+
+    progress_enabled = _resolve_progress_enabled(args)
+    _set_progress_enabled(progress_enabled)
 
     cfg = load_config(args.config)
     cfg["scenarios"] = [args.scenario]
 
     # Baselines assume static environments; force static for a fair comparison.
     if cfg.get("env_type", "static") != "static":
-        print("[!] Forcing env_type=static for baseline comparability.")
+        _progress_write("[!] Forcing env_type=static for baseline comparability.")
         cfg["env_type"] = "static"
     # Keep C_total aligned with num_uavs so sum==1 feasibility is possible.
     cfg["max_total_missions"] = cfg.get("num_uavs", 50)
@@ -381,14 +539,28 @@ def main():
     feas_by_alg = {"DOPA": [], "NSGA3": [], "NSGA2_CDP": []}
     cv_by_alg = {"DOPA": [], "NSGA3": [], "NSGA2_CDP": []}
     runtime_by_alg = {"DOPA": [], "NSGA3": [], "NSGA2_CDP": []}
+    eval_by_alg = {"DOPA": [], "NSGA3": [], "NSGA2_CDP": []}
     pareto_points_by_alg = {"DOPA": [], "NSGA3": [], "NSGA2_CDP": []}
     entropy_traces_by_alg = {"DOPA": [], "NSGA3": [], "NSGA2_CDP": []}
     wasserstein_traces_by_alg = {"DOPA": [], "NSGA3": [], "NSGA2_CDP": []}
+
+    algorithms = ["DOPA", "NSGA3", "NSGA2_CDP"]
+    total_runs = len(seeds) * len(cfg.get("scenarios", [args.scenario])) * len(algorithms)
+    outer_progress = _get_progress(total_runs, desc="runs", enabled=progress_enabled, leave=True, position=0)
 
     for seed in seeds:
         problem = make_problem(cfg, seed)
 
         # DOPA run
+        gen_bar, progress_cb = _make_gen_progress(
+            ngen=ngen,
+            pop_size=pop_size,
+            seed=seed,
+            scenario=args.scenario,
+            env_type=cfg.get("env_type", "static"),
+            algo="DOPA",
+            enabled=progress_enabled,
+        )
         dopa_res = run_scenario(
             scenario_key=args.scenario,
             problem=problem,
@@ -396,7 +568,13 @@ def main():
             ngen=ngen,
             pop_size=pop_size,
             track_wasserstein=True,
+            progress_cb=progress_cb,
         )
+        gen_bar.close()
+        outer_progress.set_postfix(
+            {"seed": seed, "scenario": args.scenario, "env": cfg.get("env_type", "static"), "algo": "DOPA"}
+        )
+        _safe_update(outer_progress, 1)
 
         # pymoo baselines use the same instance (arrays copied from problem)
         pymoo_problem = UAVAssignmentPymooProblem(
@@ -408,12 +586,55 @@ def main():
             C_total=problem.C_total,
         )
 
-        nsga3_time, nsga3_X, nsga3_traces = _run_pymoo(
-            pymoo_problem, "NSGA3", ngen, pop_size, seed, eval_problem=problem, track_trace=True
+        gen_bar, progress_cb = _make_gen_progress(
+            ngen=ngen,
+            pop_size=pop_size,
+            seed=seed,
+            scenario=args.scenario,
+            env_type=cfg.get("env_type", "static"),
+            algo="NSGA3",
+            enabled=progress_enabled,
         )
-        nsga2_time, nsga2_X, nsga2_traces = _run_pymoo(
-            pymoo_problem, "NSGA2_CDP", ngen, pop_size, seed, eval_problem=problem, track_trace=True
+        nsga3_time, nsga3_X, nsga3_traces, nsga3_evals = _run_pymoo(
+            pymoo_problem,
+            "NSGA3",
+            ngen,
+            pop_size,
+            seed,
+            eval_problem=problem,
+            track_trace=True,
+            progress_cb=progress_cb,
         )
+        gen_bar.close()
+        outer_progress.set_postfix(
+            {"seed": seed, "scenario": args.scenario, "env": cfg.get("env_type", "static"), "algo": "NSGA3"}
+        )
+        _safe_update(outer_progress, 1)
+
+        gen_bar, progress_cb = _make_gen_progress(
+            ngen=ngen,
+            pop_size=pop_size,
+            seed=seed,
+            scenario=args.scenario,
+            env_type=cfg.get("env_type", "static"),
+            algo="NSGA2_CDP",
+            enabled=progress_enabled,
+        )
+        nsga2_time, nsga2_X, nsga2_traces, nsga2_evals = _run_pymoo(
+            pymoo_problem,
+            "NSGA2_CDP",
+            ngen,
+            pop_size,
+            seed,
+            eval_problem=problem,
+            track_trace=True,
+            progress_cb=progress_cb,
+        )
+        gen_bar.close()
+        outer_progress.set_postfix(
+            {"seed": seed, "scenario": args.scenario, "env": cfg.get("env_type", "static"), "algo": "NSGA2_CDP"}
+        )
+        _safe_update(outer_progress, 1)
 
         # Compute raw objectives + CV for baselines using the same logic as DOPA.
         nsga3_raw = problem.evaluate_objectives_batch(nsga3_X)
@@ -426,12 +647,25 @@ def main():
                 "raw": np.asarray(dopa_res.get("final_population_raw", []), dtype=float),
                 "cv": np.asarray(dopa_res.get("final_population_cv", []), dtype=float),
                 "runtime": float(dopa_res.get("execution_time", 0.0)),
+                "evals": int(dopa_res.get("num_evaluations", pop_size * (ngen + 1))),
             },
-            "NSGA3": {"raw": nsga3_raw, "cv": nsga3_cv, "runtime": nsga3_time},
-            "NSGA2_CDP": {"raw": nsga2_raw, "cv": nsga2_cv, "runtime": nsga2_time},
+            "NSGA3": {"raw": nsga3_raw, "cv": nsga3_cv, "runtime": nsga3_time, "evals": nsga3_evals},
+            "NSGA2_CDP": {"raw": nsga2_raw, "cv": nsga2_cv, "runtime": nsga2_time, "evals": nsga2_evals},
         }
 
         metrics = _compute_metrics(per_alg, margin=0.05)
+
+        for name in algorithms:
+            _progress_write(
+                "run=done algo={algo} scenario={scenario} seed={seed} feas={feas:.3f} hv={hv:.4f} runtime={rt:.2f}s".format(
+                    algo=name,
+                    scenario=args.scenario,
+                    seed=seed,
+                    feas=metrics[name]["feasible_rate"],
+                    hv=metrics[name]["hv"],
+                    rt=per_alg[name]["runtime"],
+                )
+            )
 
         for name in ["DOPA", "NSGA3", "NSGA2_CDP"]:
             pareto_points_by_alg[name].append(_feasible_nd_raw(per_alg[name]["raw"], per_alg[name]["cv"]))
@@ -456,6 +690,7 @@ def main():
             feas_by_alg[name].append(metrics[name]["feasible_rate"])
             cv_by_alg[name].append(metrics[name]["mean_cv"])
             runtime_by_alg[name].append(per_alg[name]["runtime"])
+            eval_by_alg[name].append(per_alg[name]["evals"])
 
         # Save per-seed JSON (includes raw populations + CV).
         seed_payload = {
@@ -468,6 +703,7 @@ def main():
                     "final_population_cv": per_alg["DOPA"]["cv"].tolist(),
                     "metrics": metrics["DOPA"],
                     "runtime": per_alg["DOPA"]["runtime"],
+                    "num_evaluations": per_alg["DOPA"]["evals"],
                     "entropy_trace": dopa_res.get("entropy_trace"),
                     "wasserstein_trace": dopa_res.get("wasserstein_trace"),
                 },
@@ -476,6 +712,7 @@ def main():
                     "final_population_cv": per_alg["NSGA3"]["cv"].tolist(),
                     "metrics": metrics["NSGA3"],
                     "runtime": per_alg["NSGA3"]["runtime"],
+                    "num_evaluations": per_alg["NSGA3"]["evals"],
                     "entropy_trace": nsga3_traces.get("entropy_trace"),
                     "wasserstein_trace": nsga3_traces.get("wasserstein_trace"),
                 },
@@ -484,6 +721,7 @@ def main():
                     "final_population_cv": per_alg["NSGA2_CDP"]["cv"].tolist(),
                     "metrics": metrics["NSGA2_CDP"],
                     "runtime": per_alg["NSGA2_CDP"]["runtime"],
+                    "num_evaluations": per_alg["NSGA2_CDP"]["evals"],
                     "entropy_trace": nsga2_traces.get("entropy_trace"),
                     "wasserstein_trace": nsga2_traces.get("wasserstein_trace"),
                 },
@@ -492,6 +730,8 @@ def main():
         per_seed_results.append(seed_payload)
         with open(os.path.join(json_dir, f"compare_seed{seed}.json"), "w") as f:
             json.dump(seed_payload, f, indent=2)
+
+    outer_progress.close()
 
     # Aggregate summary stats for bars.
     summary = {}
@@ -507,6 +747,8 @@ def main():
             "mean_cv_std": float(np.std(cv_by_alg[name], ddof=1)) if len(cv_by_alg[name]) > 1 else 0.0,
             "runtime_mean": float(np.mean(runtime_by_alg[name])),
             "runtime_std": float(np.std(runtime_by_alg[name], ddof=1)) if len(runtime_by_alg[name]) > 1 else 0.0,
+            "eval_mean": float(np.mean(eval_by_alg[name])),
+            "eval_std": float(np.std(eval_by_alg[name], ddof=1)) if len(eval_by_alg[name]) > 1 else 0.0,
         }
 
     with open(os.path.join(json_dir, "summary.json"), "w") as f:
@@ -532,7 +774,7 @@ def main():
     # Plot 6: Population entropy trace
     _plot_trace(entropy_traces_by_alg, "Population Entropy", os.path.join(plot_dir, "entropy_trace.png"))
 
-    print(f"Comparison outputs saved under: {out_root}")
+    _progress_write(f"Comparison outputs saved under: {out_root}")
 
 
 if __name__ == "__main__":

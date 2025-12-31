@@ -9,3 +9,4 @@ pyyaml
 ray[rllib]
 gym
 pymoo
+tqdm

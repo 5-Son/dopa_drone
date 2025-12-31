@@ -3,9 +3,9 @@
 # switching_scheme options:
 #   dopa_entropy (default), sa_temp, mab_ucb, drl_dqn, moead_adaptive, strategy1, strategy2, strategy3
 switching_scheme: dopa_entropy
-num_uavs: 50
-num_targets: 20
-generations: 381
+num_uavs: 500
+num_targets: 200
+generations: 400
 pop_size: 210
 seeds: [0, 1, 2, 3, 4]
 scenarios: ["S4"] #["S1", "S2", "S3", "S4"]
@@ -15,8 +15,8 @@ enable_plot: true
 pareto_plot_type: "3d"  # 2d | 3d
 pareto_axes: [0, 1]
 plot_metrics: ["entropy_trace", "wasserstein_trace", "cxpb_trace", "mutpb_trace"] #["entropy_trace", "wasserstein_trace", "cxpb_trace", "mutpb_trace"]
-mode: time_complexity  # normal | time_complexity
-max_total_missions: 50
+mode: normal  # normal | time_complexity
+max_total_missions: 500
 
 time_complexity:
   num_uavs: [50, 100, 1000]

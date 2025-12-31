@@ -30,6 +30,7 @@ def run_scenario(
     ngen: int = 50,
     pop_size: int = 50,
     track_wasserstein: bool = True,
+    progress_cb=None,
 ):
     """
     단일 시나리오(S1~S4)를 실행하는 helper 함수.
@@ -58,7 +59,7 @@ def run_scenario(
         device=device,
     )
 
-    result = run_dopa(problem, dopa_cfg)
+    result = run_dopa(problem, dopa_cfg, progress_cb=progress_cb)
     result["scenario"] = scenario_key
     result["scenario_name"] = cfg.name
     return result
