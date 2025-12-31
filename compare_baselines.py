@@ -446,11 +446,30 @@ def _plot_trace(traces_by_alg: Dict[str, List[List[float]]], ylabel: str, path: 
     plt.close(fig)
 
 
+def _safe_std(values: List[float]) -> float:
+    arr = np.asarray(values, dtype=float)
+    finite = np.isfinite(arr)
+    if np.sum(finite) <= 1:
+        return 0.0
+    return float(np.std(arr[finite], ddof=1))
+
+
+def _finite_only(values: List[float]) -> List[float]:
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return [float("nan")]
+    return arr.tolist()
+
+
 def _boxplot(metrics_by_alg: Dict[str, List[float]], ylabel: str, path: str):
     labels = list(metrics_by_alg.keys())
-    data = [metrics_by_alg[k] for k in labels]
+    data = [_finite_only(metrics_by_alg[k]) for k in labels]
     plt.figure(figsize=(7, 4))
-    plt.boxplot(data, labels=labels, showmeans=True)
+    try:
+        plt.boxplot(data, tick_labels=labels, showmeans=True)
+    except TypeError:  # pragma: no cover - older Matplotlib
+        plt.boxplot(data, labels=labels, showmeans=True)
     plt.ylabel(ylabel)
     plt.grid(True, axis="y", alpha=0.4)
     plt.tight_layout()
@@ -738,17 +757,17 @@ def main():
     for name in ["DOPA", "NSGA3", "NSGA2_CDP"]:
         summary[name] = {
             "hv_mean": float(np.mean(hv_by_alg[name])),
-            "hv_std": float(np.std(hv_by_alg[name], ddof=1)) if len(hv_by_alg[name]) > 1 else 0.0,
+            "hv_std": _safe_std(hv_by_alg[name]),
             "igd_plus_mean": float(np.mean(igd_by_alg[name])),
-            "igd_plus_std": float(np.std(igd_by_alg[name], ddof=1)) if len(igd_by_alg[name]) > 1 else 0.0,
+            "igd_plus_std": _safe_std(igd_by_alg[name]),
             "feasible_rate_mean": float(np.mean(feas_by_alg[name])),
-            "feasible_rate_std": float(np.std(feas_by_alg[name], ddof=1)) if len(feas_by_alg[name]) > 1 else 0.0,
+            "feasible_rate_std": _safe_std(feas_by_alg[name]),
             "mean_cv_mean": float(np.mean(cv_by_alg[name])),
-            "mean_cv_std": float(np.std(cv_by_alg[name], ddof=1)) if len(cv_by_alg[name]) > 1 else 0.0,
+            "mean_cv_std": _safe_std(cv_by_alg[name]),
             "runtime_mean": float(np.mean(runtime_by_alg[name])),
-            "runtime_std": float(np.std(runtime_by_alg[name], ddof=1)) if len(runtime_by_alg[name]) > 1 else 0.0,
+            "runtime_std": _safe_std(runtime_by_alg[name]),
             "eval_mean": float(np.mean(eval_by_alg[name])),
-            "eval_std": float(np.std(eval_by_alg[name], ddof=1)) if len(eval_by_alg[name]) > 1 else 0.0,
+            "eval_std": _safe_std(eval_by_alg[name]),
         }
 
     with open(os.path.join(json_dir, "summary.json"), "w") as f:

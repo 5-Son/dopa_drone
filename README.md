@@ -56,6 +56,20 @@ Outputs live under `results/compare_<timestamp>/` with:
 - per-seed JSON (includes `final_population_raw` and `final_population_cv` for each algorithm)
 - three comparison plots (HV, IGD+, feasibility/CV/runtime)
 
+Plot from saved JSON (standalone)
+---------------------------------
+Recreate all compare_baselines plots and additional entropy plots from saved JSON files:
+```
+python plot_results.py --timestamp compare_<timestamp> --base_dir results
+```
+Options:
+```
+python plot_results.py --timestamp compare_<timestamp> --base_dir results
+python plot_results.py --timestamp compare_<timestamp> --pdf
+python plot_results.py --timestamp compare_<timestamp> --no_entropy
+```
+Outputs are written to `<timestamp>/plot/` and a summary audit is saved as `<timestamp>/plot/summary.txt`.
+
 Improving DOPA vs baselines (practical priorities)
 --------------------------------------------------
 - Make solutions feasibility-preserving: represent an individual as length-N integer targets (one target per UAV), or keep one-hot but add a repair step after crossover/mutation to enforce sum(row)==1 and d_ij <= D_max.

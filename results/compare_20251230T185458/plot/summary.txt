@@ -1,0 +1,15 @@
+timestamp: compare_20251230T185458
+json_files_loaded: 6
+algorithms: DOPA, NSGA2_CDP, NSGA3
+scenarios: unknown
+seeds: 0, 1, 2, 3, 4
+plots:
+  - hv_boxplot.png
+  - igd_plus_boxplot.png
+  - feasibility_cv_runtime.png
+  - pareto_3d.png
+  - wasserstein_trace.png
+  - entropy_trace.png
+  - entropy_algo_DOPA.png
+  - entropy_algo_NSGA2_CDP.png
+  - entropy_algo_NSGA3.png
