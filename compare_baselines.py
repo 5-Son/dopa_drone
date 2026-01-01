@@ -54,6 +54,17 @@ try:
 except Exception:  # pragma: no cover - fallback for older/newer pymoo
     from pymoo.operators.sampling.binary import BinaryRandomSampling
 from pymoo.optimize import minimize
+try:
+    from pymoo.core.sampling import Sampling
+    from pymoo.core.crossover import Crossover
+    from pymoo.core.mutation import Mutation
+except Exception:  # pragma: no cover - fallback for older/newer pymoo
+    try:
+        from pymoo.model.sampling import Sampling
+        from pymoo.model.crossover import Crossover
+        from pymoo.model.mutation import Mutation
+    except Exception:
+        Sampling = Crossover = Mutation = object
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 from pymoo.util.ref_dirs import get_reference_directions
 
@@ -250,6 +261,106 @@ class BaselineTraceCallback(Callback):
             self.progress_cb(gen=gen, eval_count=eval_count, feasible_rate=feasible_rate)
 
 
+def _repair_assignment_matrix(mat: np.ndarray, d_ij: np.ndarray, d_max: float) -> np.ndarray:
+    """Ensure each UAV selects exactly one target, preferring feasible distances."""
+    n, m = mat.shape
+    for i in range(n):
+        row = mat[i]
+        ones = np.where(row == 1)[0]
+        feasible = np.where(d_ij[i] <= d_max)[0]
+
+        if feasible.size == 0:
+            target = int(np.argmin(d_ij[i]))
+        else:
+            feasible_set = {int(j) for j in feasible}
+            feasible_ones = [int(j) for j in ones if int(j) in feasible_set]
+            if feasible_ones:
+                target = int(np.random.choice(feasible_ones))
+            else:
+                target = int(np.random.choice(feasible))
+
+        row[:] = 0
+        row[target] = 1
+    return mat
+
+
+class FeasibleAssignmentSampling(Sampling):
+    """Sample feasible one-target-per-UAV assignments."""
+
+    def __init__(self, d_ij: np.ndarray, d_max: float):
+        super().__init__()
+        self.d_ij = d_ij
+        self.d_max = d_max
+        self.n, self.m = d_ij.shape
+
+    def _do(self, problem, n_samples, **kwargs):
+        X = np.zeros((n_samples, self.n * self.m), dtype=int)
+        for s in range(n_samples):
+            mat = np.zeros((self.n, self.m), dtype=int)
+            for i in range(self.n):
+                feasible = np.where(self.d_ij[i] <= self.d_max)[0]
+                if feasible.size == 0:
+                    target = int(np.argmin(self.d_ij[i]))
+                else:
+                    target = int(np.random.choice(feasible))
+                mat[i, target] = 1
+            X[s] = mat.reshape(-1)
+        return X
+
+
+class FeasibleRowCrossover(Crossover):
+    """Row-wise crossover that preserves one target per UAV."""
+
+    def __init__(self, d_ij: np.ndarray, d_max: float):
+        super().__init__(2, 2)
+        self.d_ij = d_ij
+        self.d_max = d_max
+        self.n, self.m = d_ij.shape
+
+    def _do(self, problem, X, **kwargs):
+        n_matings = X.shape[1]
+        Y = np.zeros((self.n_offsprings, n_matings, problem.n_var), dtype=int)
+        for k in range(n_matings):
+            p1 = X[0, k].reshape(self.n, self.m)
+            p2 = X[1, k].reshape(self.n, self.m)
+            mask = np.random.rand(self.n) < 0.5
+            c1 = np.where(mask[:, None], p1, p2)
+            c2 = np.where(mask[:, None], p2, p1)
+            c1 = _repair_assignment_matrix(c1, self.d_ij, self.d_max)
+            c2 = _repair_assignment_matrix(c2, self.d_ij, self.d_max)
+            Y[0, k] = c1.reshape(-1)
+            Y[1, k] = c2.reshape(-1)
+        return Y
+
+
+class FeasibleAssignmentMutation(Mutation):
+    """Row-wise reassignment mutation within feasible distances."""
+
+    def __init__(self, d_ij: np.ndarray, d_max: float, prob: float = 0.05):
+        super().__init__()
+        self.d_ij = d_ij
+        self.d_max = d_max
+        self.n, self.m = d_ij.shape
+        self.prob = prob
+
+    def _do(self, problem, X, **kwargs):
+        X = X.copy().astype(int)
+        for idx in range(X.shape[0]):
+            mat = X[idx].reshape(self.n, self.m)
+            for i in range(self.n):
+                if np.random.rand() < self.prob:
+                    feasible = np.where(self.d_ij[i] <= self.d_max)[0]
+                    if feasible.size == 0:
+                        target = int(np.argmin(self.d_ij[i]))
+                    else:
+                        target = int(np.random.choice(feasible))
+                    mat[i, :] = 0
+                    mat[i, target] = 1
+            mat = _repair_assignment_matrix(mat, self.d_ij, self.d_max)
+            X[idx] = mat.reshape(-1)
+        return X
+
+
 class UAVAssignmentPymooProblem(Problem):
     """Binary multi-objective UAV assignment with explicit constraints for CDP."""
 
@@ -315,17 +426,17 @@ def _run_pymoo(
         algorithm = NSGA3(
             pop_size=pop_size,
             ref_dirs=ref_dirs,
-            sampling=BinaryRandomSampling(),
-            crossover=TwoPointCrossover(),
-            mutation=BitflipMutation(),
+            sampling=FeasibleAssignmentSampling(problem.d_ij, problem.D_max),
+            crossover=FeasibleRowCrossover(problem.d_ij, problem.D_max),
+            mutation=FeasibleAssignmentMutation(problem.d_ij, problem.D_max),
             eliminate_duplicates=True,
         )
     elif alg_name == "NSGA2_CDP":
         algorithm = NSGA2(
             pop_size=pop_size,
-            sampling=BinaryRandomSampling(),
-            crossover=TwoPointCrossover(),
-            mutation=BitflipMutation(),
+            sampling=FeasibleAssignmentSampling(problem.d_ij, problem.D_max),
+            crossover=FeasibleRowCrossover(problem.d_ij, problem.D_max),
+            mutation=FeasibleAssignmentMutation(problem.d_ij, problem.D_max),
             eliminate_duplicates=True,
         )
     else:

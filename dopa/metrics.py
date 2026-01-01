@@ -1,46 +1,47 @@
-# dopa/metrics.py
+﻿# dopa/metrics.py
 import numpy as np
 from scipy.spatial.distance import cdist
 
-# 기본 bin 수 (원 코드의 K_BINS)
+# Default bin count for entropy histograms.
 K_BINS = 10
 
 
 # -----------------------------
-# Population Entropy 계산
+# Population entropy.
 # -----------------------------
 def compute_population_entropy(fitnesses, k_bins: int = K_BINS):
     """
-    DOPA.ipynb의 compute_population_entropy(fitnesses, k_bins).
+    Compute population entropy over objective values.
 
-    - fitnesses: [(F1, F2, F3), ...] 형태의 리스트 또는 (pop_size, n_obj) 배열
-    - 각 objective에 대해 히스토그램을 만들고 엔트로피 계산 후 평균
+    - fitnesses: array-like shape (pop_size, n_obj) with objective values.
+    - k_bins: histogram bin count per objective.
     """
     obj_array = np.array(fitnesses)
     entropies = []
 
     for i in range(obj_array.shape[1]):
-        hist, _ = np.histogram(obj_array[:, i], bins=k_bins, density=True)
-        hist = hist[hist > 0]  # 0인 bin 제거
-        if len(hist) == 0:
+        hist, bin_edges = np.histogram(obj_array[:, i], bins=k_bins, density=True)
+        dx = np.diff(bin_edges)
+        mask = (hist > 0) & (dx > 0)
+        if not np.any(mask):
             ent = 0.0
         else:
-            ent = -np.sum(hist * np.log(hist))
+            ent = -np.sum(hist[mask] * np.log(hist[mask]) * dx[mask])
         entropies.append(ent)
 
     return float(np.mean(entropies))
 
 
 # -----------------------------
-# Wasserstein-1 Distance 계산 (Sinkhorn 근사)
+# Wasserstein-1 distance (Sinkhorn approximation).
 # -----------------------------
 def compute_wasserstein_distance(pop_fits_prev, pop_fits_next, epsilon: float = 0.1) -> float:
     """
-    DOPA.ipynb의 Sinkhorn 근사 기반 Wasserstein-1 거리 계산 함수.
+    Compute Wasserstein-1 distance between two populations (Sinkhorn approx).
 
-    - pop_fits_prev: 이전 세대의 fitness 배열 (N x m)
-    - pop_fits_next: 현재 세대의 fitness 배열 (N x m)
-    - epsilon: Sinkhorn 정규화 파라미터
+    - pop_fits_prev: previous population fitness array (N x m).
+    - pop_fits_next: next population fitness array (N x m).
+    - epsilon: Sinkhorn regularization parameter.
     """
     pop_fits_prev = np.asarray(pop_fits_prev, dtype=float)
     pop_fits_next = np.asarray(pop_fits_next, dtype=float)
@@ -59,7 +60,7 @@ def compute_wasserstein_distance(pop_fits_prev, pop_fits_next, epsilon: float = 
     b = np.ones(len(pop_fits_next)) / len(pop_fits_next)
     C = cdist(pop_fits_prev, pop_fits_next)
 
-    # ✅ 방어 처리: 거리 행렬이 유한한지 확인
+    # Fail-safe: return 0 if distance matrix has non-finite values.
     if not np.all(np.isfinite(C)):
         return 0.0
 
@@ -67,7 +68,7 @@ def compute_wasserstein_distance(pop_fits_prev, pop_fits_next, epsilon: float = 
     u = np.ones_like(a)
 
     for _ in range(50):
-        # 방어 처리: divide by zero 방지
+        # Sinkhorn update with small epsilon to avoid divide-by-zero.
         Ku = K @ (b / (K.T @ u + 1e-8))
         u = a / (Ku + 1e-8)
 
